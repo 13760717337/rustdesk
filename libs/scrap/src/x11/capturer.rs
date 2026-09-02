@@ -1,5 +1,6 @@
 use super::ffi::*;
 use super::Display;
+use crate::Pixfmt;
 use hbb_common::libc;
 use std::{io, ptr, slice};
 
@@ -11,6 +12,7 @@ pub struct Capturer {
 
     size: usize,
     saved_raw_data: Vec<u8>, // for faster compare and copy
+    converted: Vec<u8>,
 }
 
 impl Capturer {
@@ -64,6 +66,7 @@ impl Capturer {
             buffer,
             size,
             saved_raw_data: Vec::new(),
+            converted: Vec::new(),
         };
         Ok(c)
     }
@@ -93,11 +96,45 @@ impl Capturer {
         }
     }
 
+    /// Format of the frames `frame` returns; a depth-30 root is handed out as BGRA.
+    pub fn pixfmt(&self) -> Pixfmt {
+        match self.display.pixfmt() {
+            Pixfmt::AR30 => Pixfmt::BGRA,
+            pixfmt => pixfmt,
+        }
+    }
+
     pub fn frame<'b>(&'b mut self) -> std::io::Result<&'b [u8]> {
         self.get_image();
         let result = unsafe { slice::from_raw_parts(self.buffer, self.size) };
         crate::would_block_if_equal(&mut self.saved_raw_data, result)?;
+        if self.display.pixfmt() == Pixfmt::AR30 {
+            return self.ar30_to_bgra(result);
+        }
         Ok(result)
+    }
+
+    fn ar30_to_bgra(&mut self, ar30: &[u8]) -> io::Result<&[u8]> {
+        let rect = self.display.rect();
+        let stride = rect.w as usize * 4;
+        self.converted.resize(ar30.len(), 0);
+        let ret = unsafe {
+            crate::common::AR30ToARGB(
+                ar30.as_ptr(),
+                stride as _,
+                self.converted.as_mut_ptr(),
+                stride as _,
+                rect.w as _,
+                rect.h as _,
+            )
+        };
+        if ret != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("AR30ToARGB failed: {ret}"),
+            ));
+        }
+        Ok(&self.converted)
     }
 }
 
