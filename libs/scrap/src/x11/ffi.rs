@@ -104,6 +104,7 @@ extern "C" {
 
 pub const XCB_IMAGE_FORMAT_Z_PIXMAP: u8 = 2;
 pub const XCB_IMAGE_ORDER_LSB_FIRST: u8 = 0;
+pub const XCB_VISUAL_CLASS_TRUE_COLOR: u8 = 4;
 
 pub type xcb_atom_t = u32;
 pub type xcb_connection_t = c_void;

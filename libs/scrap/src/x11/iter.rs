@@ -130,18 +130,25 @@ fn get_atom_name(conn: *mut xcb_connection_t, atom: xcb_atom_t) -> String {
 
 // Depth alone does not fix the byte layout, so like FFmpeg's xcbgrab consult
 // the pixmap format and the server's byte order, and for depth 30 also require
-// the xRGB2101010 masks that libyuv's AR30 expects. `None` means unsupported:
-// `Capturer::new` refuses it instead of mislabeling the frames as BGRA.
-// 16/24/32 keep their historical little-endian mapping.
+// a TrueColor visual with the xRGB2101010 masks that libyuv's AR30 expects
+// (a DirectColor visual has the same masks but they index a colormap).
+// `None` means unsupported: `Capturer::new` refuses it instead of mislabeling
+// the frames as BGRA. 16/24/32 keep their historical little-endian mapping.
 unsafe fn get_pixfmt(setup: *const xcb_setup_t, screen: &xcb_screen_t) -> Option<Pixfmt> {
     let depth = screen.root_depth;
     let bpp = pixmap_bits_per_pixel(setup, depth);
     let lsb_first = (*setup).image_byte_order == XCB_IMAGE_ORDER_LSB_FIRST;
-    let masks = root_visual_masks(screen);
+    let visual = root_visual(screen);
+    let class = visual.map(|v| v.class);
+    let masks = visual.map(|v| (v.red_mask, v.green_mask, v.blue_mask));
     let pixfmt = match (depth, bpp) {
         (16, _) => Some(Pixfmt::RGB565LE),
         (24, _) | (32, _) => Some(Pixfmt::BGRA),
-        (30, Some(32)) if lsb_first && masks == Some((0x3ff0_0000, 0x000f_fc00, 0x0000_03ff)) => {
+        (30, Some(32))
+            if lsb_first
+                && class == Some(XCB_VISUAL_CLASS_TRUE_COLOR)
+                && masks == Some((0x3ff0_0000, 0x000f_fc00, 0x0000_03ff)) =>
+        {
             Some(Pixfmt::AR30)
         }
         _ => None,
@@ -149,7 +156,7 @@ unsafe fn get_pixfmt(setup: *const xcb_setup_t, screen: &xcb_screen_t) -> Option
     if pixfmt.is_none() {
         hbb_common::log::warn!(
             "unsupported X11 root window format: depth {depth}, bits per pixel {bpp:?}, \
-             rgb masks {masks:x?}, lsb first {lsb_first}"
+             visual class {class:?}, rgb masks {masks:x?}, lsb first {lsb_first}"
         );
     }
     pixfmt
@@ -163,7 +170,7 @@ unsafe fn pixmap_bits_per_pixel(setup: *const xcb_setup_t, depth: u8) -> Option<
         .map(|format| format.bits_per_pixel)
 }
 
-unsafe fn root_visual_masks(screen: &xcb_screen_t) -> Option<(u32, u32, u32)> {
+unsafe fn root_visual(screen: &xcb_screen_t) -> Option<&xcb_visualtype_t> {
     let mut depths = xcb_screen_allowed_depths_iterator(screen);
     while depths.rem > 0 {
         let depth = &*depths.data;
@@ -171,7 +178,7 @@ unsafe fn root_visual_masks(screen: &xcb_screen_t) -> Option<(u32, u32, u32)> {
         for i in 0..xcb_depth_visuals_length(depth) {
             let visual = &*visuals.add(i as usize);
             if visual.visual_id == screen.root_visual {
-                return Some((visual.red_mask, visual.green_mask, visual.blue_mask));
+                return Some(visual);
             }
         }
         xcb_depth_next(&mut depths);
