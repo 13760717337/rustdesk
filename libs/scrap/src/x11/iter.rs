@@ -12,7 +12,11 @@ use super::{Display, Rect, Server};
 
 pub struct DisplayIter {
     outer: xcb_screen_iterator_t,
-    inner: Option<(xcb_randr_monitor_info_iterator_t, xcb_window_t)>,
+    inner: Option<(
+        xcb_randr_monitor_info_iterator_t,
+        xcb_window_t,
+        Option<Pixfmt>,
+    )>,
     server: Rc<Server>,
 }
 
@@ -30,13 +34,18 @@ impl DisplayIter {
     fn next_screen(
         outer: &mut xcb_screen_iterator_t,
         server: &Server,
-    ) -> Option<(xcb_randr_monitor_info_iterator_t, xcb_window_t)> {
+    ) -> Option<(
+        xcb_randr_monitor_info_iterator_t,
+        xcb_window_t,
+        Option<Pixfmt>,
+    )> {
         if outer.rem == 0 {
             return None;
         }
 
         unsafe {
             let root = (*outer.data).root;
+            let pixfmt = get_pixfmt(server.setup(), &*outer.data);
 
             let cookie = xcb_randr_get_monitors_unchecked(
                 server.raw(),
@@ -51,7 +60,7 @@ impl DisplayIter {
             libc::free(response as *mut _);
             xcb_screen_next(outer);
 
-            Some((inner, root))
+            Some((inner, root, pixfmt))
         }
     }
 }
@@ -61,13 +70,12 @@ impl Iterator for DisplayIter {
 
     fn next(&mut self) -> Option<Display> {
         loop {
-            if let Some((ref mut inner, root)) = self.inner {
+            if let Some((ref mut inner, root, pixfmt)) = self.inner {
                 // If there is something in the current screen, return that.
                 if inner.rem != 0 {
                     unsafe {
                         let data = &*inner.data;
                         let name = get_atom_name(self.server.raw(), data.name);
-                        let pixfmt = get_pixfmt(self.server.raw(), root).unwrap_or(Pixfmt::BGRA);
                         let display = Display::new(
                             self.server.clone(),
                             data.primary != 0,
@@ -120,20 +128,53 @@ fn get_atom_name(conn: *mut xcb_connection_t, atom: xcb_atom_t) -> String {
     }
 }
 
-unsafe fn get_pixfmt(conn: *mut xcb_connection_t, root: xcb_window_t) -> Option<Pixfmt> {
-    let geo_cookie = xcb_get_geometry_unchecked(conn, root);
-    let geo = xcb_get_geometry_reply(conn, geo_cookie, ptr::null_mut());
-    if geo.is_null() {
-        return None;
-    }
-    let depth = (*geo).depth;
-    libc::free(geo as _);
-    // now only support little endian
-    // https://github.com/FFmpeg/FFmpeg/blob/a9c05eb657d0d05f3ac79fe9973581a41b265a5e/libavdevice/xcbgrab.c#L519
-    match depth {
-        16 => Some(Pixfmt::RGB565LE),
-        30 => Some(Pixfmt::AR30),
-        32 => Some(Pixfmt::BGRA),
+// Depth alone does not fix the byte layout, so like FFmpeg's xcbgrab consult
+// the pixmap format and the server's byte order, and for depth 30 also require
+// the xRGB2101010 masks that libyuv's AR30 expects. `None` means unsupported:
+// `Capturer::new` refuses it instead of mislabeling the frames as BGRA.
+// 16/24/32 keep their historical little-endian mapping.
+unsafe fn get_pixfmt(setup: *const xcb_setup_t, screen: &xcb_screen_t) -> Option<Pixfmt> {
+    let depth = screen.root_depth;
+    let bpp = pixmap_bits_per_pixel(setup, depth);
+    let lsb_first = (*setup).image_byte_order == XCB_IMAGE_ORDER_LSB_FIRST;
+    let masks = root_visual_masks(screen);
+    let pixfmt = match (depth, bpp) {
+        (16, _) => Some(Pixfmt::RGB565LE),
+        (24, _) | (32, _) => Some(Pixfmt::BGRA),
+        (30, Some(32)) if lsb_first && masks == Some((0x3ff0_0000, 0x000f_fc00, 0x0000_03ff)) => {
+            Some(Pixfmt::AR30)
+        }
         _ => None,
+    };
+    if pixfmt.is_none() {
+        hbb_common::log::warn!(
+            "unsupported X11 root window format: depth {depth}, bits per pixel {bpp:?}, \
+             rgb masks {masks:x?}, lsb first {lsb_first}"
+        );
     }
+    pixfmt
+}
+
+unsafe fn pixmap_bits_per_pixel(setup: *const xcb_setup_t, depth: u8) -> Option<u8> {
+    let formats = xcb_setup_pixmap_formats(setup);
+    (0..xcb_setup_pixmap_formats_length(setup))
+        .map(|i| &*formats.add(i as usize))
+        .find(|format| format.depth == depth)
+        .map(|format| format.bits_per_pixel)
+}
+
+unsafe fn root_visual_masks(screen: &xcb_screen_t) -> Option<(u32, u32, u32)> {
+    let mut depths = xcb_screen_allowed_depths_iterator(screen);
+    while depths.rem > 0 {
+        let depth = &*depths.data;
+        let visuals = xcb_depth_visuals(depth);
+        for i in 0..xcb_depth_visuals_length(depth) {
+            let visual = &*visuals.add(i as usize);
+            if visual.visual_id == screen.root_visual {
+                return Some((visual.red_mask, visual.green_mask, visual.blue_mask));
+            }
+        }
+        xcb_depth_next(&mut depths);
+    }
+    None
 }

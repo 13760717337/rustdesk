@@ -234,3 +234,49 @@ pub fn convert(captured: &PixelBuffer, pixfmt: crate::Pixfmt, dst: &mut Vec<u8>)
     }
     Ok(())
 }
+
+/// X11 depth-30 frames (xRGB2101010, libyuv's AR30) to BGRA. The top two bits
+/// are padding, not alpha, so the output alpha is forced opaque; libyuv has no
+/// XR30 conversion and would expand them to 0/85/170/255.
+pub fn ar30_to_bgra(src: &[u8], width: usize, height: usize, dst: &mut Vec<u8>) -> ResultType<()> {
+    let stride = width * 4;
+    if src.len() < stride * height {
+        bail!("wrong src len, {} < {stride} * {height}", src.len());
+    }
+    dst.resize(stride * height, 0);
+    call_yuv!(AR30ToARGB(
+        src.as_ptr(),
+        stride as _,
+        dst.as_mut_ptr(),
+        stride as _,
+        width as _,
+        height as _,
+    ));
+    for bgra in dst.chunks_exact_mut(4) {
+        bgra[3] = 0xff;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ar30_to_bgra_drops_padding_bits() {
+        // (padding, r, g, b) packed as X11 xRGB2101010, little endian.
+        let px =
+            |x: u32, r: u32, g: u32, b: u32| ((x << 30) | (r << 20) | (g << 10) | b).to_le_bytes();
+        let src = [
+            px(0, 1023, 0, 0),
+            px(1, 0, 1023, 0),
+            px(2, 0, 0, 1023),
+            px(3, 512, 256, 128),
+        ]
+        .concat();
+        let mut dst = Vec::new();
+        super::ar30_to_bgra(&src, 4, 1, &mut dst).unwrap();
+        assert_eq!(
+            dst,
+            [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 32, 64, 128, 255]
+        );
+    }
+}

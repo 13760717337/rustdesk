@@ -13,13 +13,21 @@ pub struct Capturer {
     size: usize,
     saved_raw_data: Vec<u8>, // for faster compare and copy
     converted: Vec<u8>,
+    pixfmt: Pixfmt,
 }
 
 impl Capturer {
     pub fn new(display: Display) -> io::Result<Capturer> {
+        let Some(pixfmt) = display.pixfmt() else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "unsupported X11 root window pixel format",
+            ));
+        };
+
         // Calculate dimensions.
 
-        let pixel_width = display.pixfmt().bytes_per_pixel();
+        let pixel_width = pixfmt.bytes_per_pixel();
         let rect = display.rect();
         let size = (rect.w as usize) * (rect.h as usize) * pixel_width;
 
@@ -67,6 +75,7 @@ impl Capturer {
             size,
             saved_raw_data: Vec::new(),
             converted: Vec::new(),
+            pixfmt,
         };
         Ok(c)
     }
@@ -98,7 +107,7 @@ impl Capturer {
 
     /// Format of the frames `frame` returns; a depth-30 root is handed out as BGRA.
     pub fn pixfmt(&self) -> Pixfmt {
-        match self.display.pixfmt() {
+        match self.pixfmt {
             Pixfmt::AR30 => Pixfmt::BGRA,
             pixfmt => pixfmt,
         }
@@ -108,7 +117,7 @@ impl Capturer {
         self.get_image();
         let result = unsafe { slice::from_raw_parts(self.buffer, self.size) };
         crate::would_block_if_equal(&mut self.saved_raw_data, result)?;
-        if self.display.pixfmt() == Pixfmt::AR30 {
+        if self.pixfmt == Pixfmt::AR30 {
             return self.ar30_to_bgra(result);
         }
         Ok(result)
@@ -116,24 +125,8 @@ impl Capturer {
 
     fn ar30_to_bgra(&mut self, ar30: &[u8]) -> io::Result<&[u8]> {
         let rect = self.display.rect();
-        let stride = rect.w as usize * 4;
-        self.converted.resize(ar30.len(), 0);
-        let ret = unsafe {
-            crate::common::AR30ToARGB(
-                ar30.as_ptr(),
-                stride as _,
-                self.converted.as_mut_ptr(),
-                stride as _,
-                rect.w as _,
-                rect.h as _,
-            )
-        };
-        if ret != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("AR30ToARGB failed: {ret}"),
-            ));
-        }
+        crate::common::ar30_to_bgra(ar30, rect.w as _, rect.h as _, &mut self.converted)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         Ok(&self.converted)
     }
 }

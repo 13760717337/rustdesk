@@ -11,7 +11,7 @@ pub struct Display {
     rect: Rect,
     root: xcb_window_t,
     name: String,
-    pixfmt: Pixfmt,
+    pixfmt: Option<Pixfmt>,
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl Display {
         rect: Rect,
         root: xcb_window_t,
         name: String,
-        pixfmt: Pixfmt,
+        pixfmt: Option<Pixfmt>,
     ) -> Display {
         Display {
             server,
@@ -64,7 +64,8 @@ impl Display {
         self.name.clone()
     }
 
-    pub fn pixfmt(&self) -> Pixfmt {
+    /// `None` when the root window uses a pixel layout we cannot decode.
+    pub fn pixfmt(&self) -> Option<Pixfmt> {
         self.pixfmt
     }
 }
