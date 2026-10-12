@@ -63,14 +63,16 @@ class DesktopSettingPage extends StatefulWidget {
   static final List<SettingsTabKey> tabKeys = [
     if (bind.mainGetBuildinOption(key: kOptionHideGeneralSetting) != 'Y')
       SettingsTabKey.general,
-    if (!isWeb &&
-        !bind.isOutgoingOnly() &&
-        !bind.isDisableSettings() &&
-        bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
-      SettingsTabKey.safety,
-    if (!bind.isDisableSettings() &&
-        bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
-      SettingsTabKey.network,
+    // Custom build: Security tab hidden (permanent password is fixed and unchangeable).
+    // if (!isWeb &&
+    //     !bind.isOutgoingOnly() &&
+    //     !bind.isDisableSettings() &&
+    //     bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
+    //   SettingsTabKey.safety,
+    // Custom build: Network tab hidden (ID/relay server is fixed at build time).
+    // if (!bind.isDisableSettings() &&
+    //     bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
+    //   SettingsTabKey.network,
     if (!bind.isIncomingOnly()) SettingsTabKey.display,
     if (!bind.isDisableAccount()) SettingsTabKey.account,
     if (isWindows &&
