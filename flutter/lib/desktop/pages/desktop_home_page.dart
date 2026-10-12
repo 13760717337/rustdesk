@@ -279,13 +279,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   buildPasswordBoard(BuildContext context) {
-    return ChangeNotifierProvider.value(
-        value: gFFI.serverModel,
-        child: Consumer<ServerModel>(
-          builder: (context, model, child) {
-            return buildPasswordBoard2(context, model);
-          },
-        ));
+    // Custom build: password board hidden. The permanent password is fixed
+    // at build time and cannot be viewed or changed by the end user.
+    return const SizedBox.shrink();
   }
 
   buildPasswordBoard2(BuildContext context, ServerModel model) {
