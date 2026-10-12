@@ -52,6 +52,9 @@ env:
   MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
   UPLOAD_ARTIFACT: "${{ inputs.upload-artifact }}"
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}-2"
+  # custom self-hosted server, baked into the client at build time
+  RENDEZVOUS_SERVER: "${{ secrets.RENDEZVOUS_SERVER }}"
+  RS_PUB_KEY: "${{ secrets.RS_PUB_KEY }}"
 
 jobs:
   generate-sbom:
